@@ -119,15 +119,16 @@ namespace {
   bool doNull;
   int tactical;
   
-  // Breadcrumbs are used to mark nodes as being searched by a given thread.
+  // Breadcrumbs are used to mark nodes as being searched by a given thread
   struct Breadcrumb {
     std::atomic<Thread*> thread;
     std::atomic<Key> key;
   };
   std::array<Breadcrumb, 1024> breadcrumbs;
 
-  // ThreadHolding keeps track of which thread left breadcrumbs at the given node for potential reductions.
-  // A free node will be marked upon entering the moves loop, and unmarked upon leaving that loop, by the ctor/dtor of this struct.
+  // ThreadHolding structure keeps track of which thread left breadcrumbs at the given
+  // node for potential reductions. A free node will be marked upon entering the moves
+  // loop by the constructor, and unmarked upon leaving that loop by the destructor.
   struct ThreadHolding {
     explicit ThreadHolding(Thread* thisThread, Key posKey, int ply) {
        location = ply < 8 ? &breadcrumbs[posKey & (breadcrumbs.size() - 1)] : nullptr;
@@ -135,7 +136,7 @@ namespace {
        owning = false;
        if (location)
        {
-          // see if another already marked this location, if not, mark it ourselves.
+          // See if another already marked this location, if not, mark it ourselves
           Thread* tmp = (*location).thread.load(std::memory_order_relaxed);
           if (tmp == nullptr)
           {
@@ -150,7 +151,7 @@ namespace {
     }
 
     ~ThreadHolding() {
-       if (owning) // free the marked location.
+       if (owning) // Free the marked location
            (*location).thread.store(nullptr, std::memory_order_relaxed);
     }
 
@@ -430,7 +431,7 @@ void MainThread::search() {
 /// consumed, the user stops the search, or the maximum search depth is reached.
 
 void Thread::search() {
-
+  bool bSewingMachine = Options["Show Fail High and Fail Low"];
   // To allow access to (ss-7) up to (ss+2), the stack must be oversized.
   // The former is needed to allow update_continuation_histories(ss-1, ...),
   // which accesses its argument at ss-6, also near the root.
@@ -534,7 +535,8 @@ void Thread::search() {
               beta  = std::min(previousScore + delta, VALUE_INFINITE);
 
               // Adjust contempt based on root move's previousScore (dynamic contempt)
-              int dct = ct + 86 * previousScore / (abs(previousScore) + 176);
+              int dt = Options["Dynamic Contempt"];
+              int dct = ct + dt * (86 * previousScore / (abs(previousScore) + 176));
 
               contempt = (us == WHITE ?  make_score(dct, dct / 2)
                                       : -make_score(dct, dct / 2));
@@ -555,7 +557,6 @@ void Thread::search() {
               // and we want to keep the same order for all the moves except the
               // new PV that goes to the front. Note that in case of MultiPV
               // search the already searched PV lines are preserved.
-									   
               std::stable_sort(rootMoves.begin() + pvIdx, rootMoves.begin() + pvLast);
 
               // If search has been stopped, we break immediately. Sorting is
@@ -569,7 +570,7 @@ void Thread::search() {
               if (   mainThread
                   && multiPV == 1
                   && (bestValue <= alpha || bestValue >= beta)
-                  && Time.elapsed() > 3000)
+                  && (Time.elapsed() > 3000 ) && bSewingMachine)
                   sync_cout << UCI::pv(rootPos, rootDepth, alpha, beta) << sync_endl;
 
               // In case of failing low/high increase aspiration window and
@@ -794,9 +795,9 @@ namespace {
     // statScore of the previous grandchild. This influences the reduction rules in
     // LMR which are based on the statScore of parent position.
     if (rootNode)
-        (ss + 4)->statScore = 0;
+        (ss+4)->statScore = 0;
     else
-        (ss + 2)->statScore = 0;
+        (ss+2)->statScore = 0;
 
     // Step 4. Transposition table lookup. We don't want the score of a partial
     // search to overwrite a previous full search TT value, so we use a different
@@ -827,7 +828,7 @@ namespace {
 
                 // Extra penalty for early quiet moves of the previous ply
                 if ((ss-1)->moveCount <= 2 && !pos.captured_piece())
-                        update_continuation_histories(ss-1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
+                    update_continuation_histories(ss-1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
             }
             // Penalty for a quiet ttMove that fails low
             else if (!pos.capture_or_promotion(ttMove))
@@ -1048,7 +1049,6 @@ namespace {
         &&  eval >= beta
         &&  ss->staticEval >= beta - 33 * depth / ONE_PLY + 299
         && !excludedMove
-																	  
         &&  pos.non_pawn_material(us)
         && (ss->ply >= thisThread->nmpMinPly || us != thisThread->nmpColor))
     {
@@ -1178,7 +1178,7 @@ moves_loop: // When in check, search starts from here
     bool isSingularExtension = false;//from Kelly
     ttCapture = ttMove && pos.capture_or_promotion(ttMove);
 
-    // Mark this node as being searched.
+    // Mark this node as being searched
     ThreadHolding th(thisThread, posKey, ss->ply);
 
     // Step 12. Loop through all pseudo-legal moves until no moves remain
