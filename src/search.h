@@ -72,6 +72,7 @@ struct RootMove {
   int64_t visits = 0;
   int selDepth = 0;
   int tbRank = 0;
+  int bestMoveCount = 0;
   Value tbScore;
   std::vector<Move> pv;
 };
