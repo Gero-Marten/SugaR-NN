@@ -21,9 +21,7 @@
 #include <algorithm>
 #include <cassert>
 #include <ostream>
-#include <iostream>
 #include <sstream>
-#include <thread>
 
 #include "misc.h"
 #include "search.h"
@@ -41,8 +39,7 @@ namespace UCI {
 
 /// 'On change' actions, triggered by an option's value change
 void on_clear_hash(const Option&) { Search::clear(); }
-void on_hash_size(const Option& o) { TT.resize(o);} //from Kelly
-void on_large_pages(const Option& o) { TT.resize(o); }
+void on_hash_size(const Option& o) { TT.resize(o); }
 void on_logger(const Option& o) { start_logger(o); }
 void on_threads(const Option& o) { Threads.set(o); }
 void on_tb_path(const Option& o) { Tablebases::init(o); }
@@ -50,10 +47,12 @@ void on_HashFile(const Option& o) { TT.set_hash_file_name(o); }
 void SaveHashtoFile(const Option&) { TT.save(); }
 void LoadHashfromFile(const Option&) { TT.load(); }
 void LoadEpdToHash(const Option&) { TT.load_epd_to_hash(); }
-void on_book_file(const Option& o) { polybook.init(o); }
+void on_book_file1(const Option& o) { polybook1.init(o); }
 void on_book_file2(const Option& o) { polybook2.init(o); }
-void on_best_book_move(const Option& o) { polybook.set_best_book_move(o); }
-void on_book_depth(const Option& o) { polybook.set_book_depth(o); }
+void on_best_book_move1(const Option& o) { polybook1.set_best_book_move(o); }
+void on_best_book_move2(const Option& o) { polybook2.set_best_book_move(o); }
+void on_book_depth1(const Option& o) { polybook1.set_book_depth(o); }
+void on_book_depth2(const Option& o) { polybook2.set_book_depth(o); }
 
 
 /// Our case insensitive less() function as required by UCI protocol
@@ -71,14 +70,22 @@ void init(OptionsMap& o) {
   // at most 2^32 clusters.
   constexpr int MaxHashMB = Is64Bit ? 131072 : 2048;
 
-  o["Debug Log File"]        << Option("", on_logger);
-  o["Contempt"]              << Option(0, -100, 100);
-  o["Dynamic Contempt"]      << Option(false);
+  o["Use Book1"] << Option(false);
+  o["BestBook1Move"] << Option(false, on_best_book_move1);
+  o["BookFile1"] << Option("book1.bin", on_book_file1);
+  o["BookDepth1"] << Option(300, 1, 350, on_book_depth1);
+  o["Use Book2"] << Option(false);
+  o["BestBook2Move"] << Option(false, on_best_book_move2);
+  o["BookFile2"] << Option("book2.bin", on_book_file2);
+  o["BookDepth2"] << Option(300, 1, 350, on_book_depth2);
+
+  o["Debug Log File"]              << Option("", on_logger);
+  o["Contempt"]                    << Option(0, -100, 100);
+  o["Dynamic Contempt"]            << Option(false);
   o["Analysis Contempt"]     << Option("Off var Off var White var Black var Both", "Off");
   o["Threads"]               << Option(1, 1, 512, on_threads);
   o["Hash"]                  << Option(16, 1, MaxHashMB, on_hash_size);
   o["Clear Hash"]            << Option(on_clear_hash);
-  o["Clean Search"]          << Option(false);
   o["Show Fail High and Fail Low"] << Option(true);
   o["Ponder"]                << Option(false);
   o["MultiPV"]               << Option(1, 1, 500);
@@ -97,19 +104,15 @@ void init(OptionsMap& o) {
   o["ICCF Analyzes"]         << Option(0, 0,  8);
   o["UCI_LimitStrength"]     << Option(false);
   o["UCI_Elo"]               << Option(1350, 1350, 2850);
-  o["Large Pages"]           << Option(true, on_large_pages);
-  o["Perceptron Algorithm"]  << Option(false);
-  o["Use MCTS Score"]        << Option(false);
-  o["NullMove"]              << Option(true);
-  o["NN Persisted Self-Learning"]  << Option(true);
   o["SyzygyPath"]            << Option("<empty>", on_tb_path);
   o["SyzygyProbeDepth"]      << Option(1, 1, 100);
   o["Syzygy50MoveRule"]      << Option(true);
   o["SyzygyProbeLimit"]      << Option(7, 0, 7);
-  o["BookFile"]              << Option("<empty>", on_book_file);
-  o["BookFile2"]             << Option("<empty>", on_book_file2);
-  o["BestBookMove"]          << Option(true, on_best_book_move);
-  o["BookDepth"]             << Option(255, 1, 255, on_book_depth);
+  o["Perceptron Algorithm"]  << Option(false);
+  o["Use MCTS Score"]        << Option(false);
+  o["NullMove"]              << Option(true);
+  o["NN Persisted Self-Learning"]  << Option(false);
+  o["Variety"]               << Option (0, 0, 40);
 }
 
 

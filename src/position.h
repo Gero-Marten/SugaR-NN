@@ -30,8 +30,7 @@
 #include "types.h"
 
 //kelly patch begin
-extern void setStartPoint(bool start);
-extern void files(int x, Key FileKey);
+extern void setStartPoint();
 //kelly patch end
 
 /// StateInfo struct stores information needed to restore a Position object to

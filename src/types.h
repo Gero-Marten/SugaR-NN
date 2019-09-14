@@ -132,10 +132,6 @@ enum Color {
 };
 
 enum CastlingRights {
-											 
-  
-
-					
   NO_CASTLING,
   WHITE_OO,
   WHITE_OOO = WHITE_OO << 1,
@@ -352,6 +348,11 @@ inline Score operator*(Score s, int i) {
   return result;
 }
 
+/// Multiplication of a Score by an boolean
+inline Score operator*(Score s, bool b) {
+  return Score(int(s) * int(b));
+}
+
 constexpr Color operator~(Color c) {
   return Color(c ^ BLACK); // Toggle color
 }
@@ -447,6 +448,10 @@ constexpr PieceType promotion_type(Move m) {
 
 constexpr Move make_move(Square from, Square to) {
   return Move((from << 6) + to);
+}
+
+constexpr Move reverse_move(Move m) {
+  return make_move(to_sq(m), from_sq(m));
 }
 
 template<MoveType T>

@@ -21,7 +21,10 @@
 #include <cstring>   // For std::memset
 #include <iostream>
 #include <thread>
+#include <cstring>   // For std::memset
 #include <fstream> //from kellykynyama mcts
+//Hash
+#include <fstream>
 #include "uci.h"
 using std::string;
 #include <sstream>
@@ -31,20 +34,18 @@ using std::string;
 #include <iterator>
 #include "position.h"
 #include "thread.h"
-
+//endHash
 #include "bitboard.h"
 #include "misc.h"
 #include "thread.h"
 #include "tt.h"
 #include "uci.h"
-#include "windows.h"
 
 //from Kelly Begin
 using namespace std;
-
-MCTSHashTable mctsHT;
+LearningHashTable globalLearningHT,experienceHT;
 //from Kelly end
-
+//Hash
 //https://stackoverflow.com/questions/236129/most-elegant-way-to-split-a-string
 template<typename Out>
 void split(const std::string &s, char delim, Out result) {
@@ -61,7 +62,7 @@ std::vector<std::string> split(const std::string &s, char delim) {
 	split(s, delim, std::back_inserter(elems));
 	return elems;
 }
-
+//endHash
 TranspositionTable TT; // Our global transposition table
 
 /// TTEntry::save populates the TTEntry with a new node's data, possibly
@@ -90,59 +91,6 @@ void TTEntry::save(Key k, Value v, bool pv, Bound b, Depth d, Move m, Value ev) 
   }
 }
 
-int use_large_pages = -1;
-int got_privileges = -1;
-
-
-bool Get_LockMemory_Privileges()
-{
-    HANDLE TH, PROC7;
-    TOKEN_PRIVILEGES tp;
-    bool ret = false;
-
-    PROC7 = GetCurrentProcess();
-    if (OpenProcessToken(PROC7, TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &TH))
-    {
-        if (LookupPrivilegeValue(NULL, TEXT("SeLockMemoryPrivilege"), &tp.Privileges[0].Luid))
-        {
-            tp.PrivilegeCount = 1;
-            tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-            if (AdjustTokenPrivileges(TH, FALSE, &tp, 0, NULL, 0))
-            {
-                if (GetLastError() != ERROR_NOT_ALL_ASSIGNED)
-                    ret = true;
-            }
-        }
-        CloseHandle(TH);
-    }
-    return ret;
-}
-
-
-void Try_Get_LockMemory_Privileges()
-{
-    use_large_pages = 0;
-
-    if (!Options["Large Pages"])
-        return;
-
-    if (got_privileges == -1)
-    {
-        if (Get_LockMemory_Privileges() == true)
-            got_privileges = 1;
-        else
-        {
-            sync_cout << "No Privilege for Large Pages" << sync_endl;
-            got_privileges = 0;
-        }
-    }
-
-    if (got_privileges == 0)      
-        return;
-
-    use_large_pages = 1;        
-}
-
 
 /// TranspositionTable::resize() sets the size of the transposition table,
 /// measured in megabytes. Transposition table consists of a power of 2 number
@@ -150,69 +98,12 @@ void Try_Get_LockMemory_Privileges()
 
 void TranspositionTable::resize(size_t mbSize) {
 
-  if (mbSize == 0)
-      mbSize = mbSize_last_used;
+  Threads.main()->wait_for_search_finished();
 
-  if (mbSize == 0)
-      return;
+  clusterCount = mbSize * 1024 * 1024 / sizeof(Cluster);
 
-  mbSize_last_used = mbSize;
-
-  Try_Get_LockMemory_Privileges();
-
-  size_t newClusterCount = mbSize * 1024 * 1024 / sizeof(Cluster);
-
-  if (newClusterCount == clusterCount)
-  {
-      if ((use_large_pages == 1) && (large_pages_used))      
-          return;
-      if ((use_large_pages == 0) && (large_pages_used == false))
-          return;
-  }
-
-  clusterCount = newClusterCount;
- 
-  if (use_large_pages < 1)
-  {
-      if (mem != NULL)
-      {
-          if (large_pages_used)
-              VirtualFree(mem, 0, MEM_RELEASE);
-          else          
-              free(mem);
-      }
-      uint64_t memsize = clusterCount * sizeof(Cluster) + CacheLineSize - 1;
-      mem = calloc(memsize, 1);
-      large_pages_used = false;
-  }
-  else
-  {
-      if (mem != NULL)
-      {
-          if (large_pages_used)
-              VirtualFree(mem, 0, MEM_RELEASE);
-          else
-              free(mem);
-      }
-
-      int64_t memsize = clusterCount * sizeof(Cluster);
-      mem = VirtualAlloc(NULL, memsize, MEM_LARGE_PAGES | MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-      if (mem == NULL)
-      {
-          std::cerr << "Failed to allocate " << mbSize
-              << "MB Large Page Memory for transposition table, switching to default" << std::endl;
-
-          use_large_pages = 0;
-          mem = malloc(clusterCount * sizeof(Cluster) + CacheLineSize - 1);
-          large_pages_used = false;
-      }
-      else
-      {
-          sync_cout << "info string Hash LargePages " << (memsize >> 20) << " Mb" << sync_endl;
-          large_pages_used = true;
-      }
-        
-  }
+  free(mem);
+  mem = malloc(clusterCount * sizeof(Cluster) + CacheLineSize - 1);
 
   if (!mem)
   {
@@ -255,6 +146,7 @@ void TranspositionTable::clear() {
       th.join();
 }
 
+//Hash
 void TranspositionTable::set_hash_file_name(const std::string& fname) { hashfilename = fname; }
 
 bool TranspositionTable::save() {
@@ -591,6 +483,7 @@ void TranspositionTable::load_epd_to_hash() {
 		myfile.close();
 	}
 }
+//endHash
 
 /// TranspositionTable::probe() looks up the current position in the transposition
 /// table. It returns true and a pointer to the TTEntry if the position is found.
@@ -640,262 +533,173 @@ int TranspositionTable::hashfull() const {
   return cnt * 1000 / (ClusterSize * (1000 / ClusterSize));
 }
 //from Kelly begin
-void expResize(std::string fileName) {
-
-    ifstream myFile(fileName+".bin", ios::in | ios::binary);
-    int load = 1;
-    while (load)
+void loadLearningFileIntoLearningTables(bool toDeleteBinFile) {
+  std::string fileName="experience";
+  ifstream inputLearningFile("experience.bin", ios::in | ios::binary);
+  int loading = 1;
+  while (loading)
+  {
+    LearningFileEntry currentInputLearningFileEntry;
+    currentInputLearningFileEntry.depth = DEPTH_ZERO;
+    currentInputLearningFileEntry.hashKey = 0;
+    currentInputLearningFileEntry.move = MOVE_NONE;
+    currentInputLearningFileEntry.score = VALUE_NONE;
+    inputLearningFile.read((char*)&currentInputLearningFileEntry, sizeof(currentInputLearningFileEntry));
+    if (currentInputLearningFileEntry.hashKey)
     {
-	    ExpEntry tempExpEntry;
-	    tempExpEntry.depth = Depth(0);
-	    tempExpEntry.hashKey = 0;
-	    tempExpEntry.move = Move(0);
-	    tempExpEntry.score = Value(0);
-
-	    myFile.read((char*)&tempExpEntry, sizeof(tempExpEntry));
-
-	    if (tempExpEntry.hashKey)
-	    {
-
-		    mctsInsert(tempExpEntry);
-	    }
-	    else
-		    load = 0;
-
-
-
-	    if (!tempExpEntry.hashKey)
-		    load = 0;
+      insertIntoOrUpdateLearningTable(currentInputLearningFileEntry,globalLearningHT);
+      if(toDeleteBinFile)
+      {
+	 insertIntoOrUpdateLearningTable(currentInputLearningFileEntry,experienceHT);
+      }
     }
-    myFile.close();
+    else
+      loading = 0;
+  }
+  inputLearningFile.close();
+  if(toDeleteBinFile)
+  {
+    char fileNameStr[fileName.size() + 1];
+    strcpy(fileNameStr, fileName.c_str());
+    remove(fileNameStr);
+  }
 }
 
-void expOpeningsLoad(char* fen)
+void insertIntoOrUpdateLearningTable(LearningFileEntry& fileExpEntry,LearningHashTable& learningHT)
 {
+    // We search in the range of all the hash table entries with key fileExpEntry
+    auto range = learningHT.equal_range(fileExpEntry.hashKey);
+    auto it1 = range.first;
+    auto it2 = range.second;
 
-	ifstream myFile(fen, ios::in | ios::binary);
-
-
-
-
-	int load = 1;
-
-	while (load)
+    bool isNewNode = true;
+    while (it1 != it2)
+    {
+      Node node = &(it1->second);
+      if (node->hashKey == fileExpEntry.hashKey)
 	{
-		ExpEntry tempExpEntry;
-		tempExpEntry.depth = Depth(0);
-		tempExpEntry.hashKey = 0;
-		tempExpEntry.move = Move(0);
-		tempExpEntry.score = Value(0);
-		myFile.read((char*)&tempExpEntry, sizeof(tempExpEntry));
-
-		if (tempExpEntry.hashKey)
-		{
-			mctsInsert(tempExpEntry);
-		}
-		load = 0;
-
-
-		if (!tempExpEntry.hashKey)
-			load = 0;
+	  isNewNode = false;
+	  if(
+	    (((node->latestMoveInfo.move == fileExpEntry.move) && (node->latestMoveInfo.depth <= fileExpEntry.depth))
+		||
+	     ((node->latestMoveInfo.move != fileExpEntry.move) &&
+	      ((node->latestMoveInfo.depth < fileExpEntry.depth) || ((node->latestMoveInfo.depth == fileExpEntry.depth) && (node->latestMoveInfo.score <= fileExpEntry.score ))))
+	    )
+	   )
+	  { // Return the HashTable's node updated
+	    //update lateChild begin
+	    node->latestMoveInfo.move = fileExpEntry.move;
+	    node->latestMoveInfo.score = fileExpEntry.score;
+	    node->latestMoveInfo.depth = fileExpEntry.depth;
+	    //update lateChild end
+	    //exit the position
+	    break;
+	  }
 	}
-	myFile.close();
+      it1++;
+    }
+
+    if (isNewNode)
+    {
+      // Node was not found, so we have to create a new one
+      NodeInfo infos;
+      infos.hashKey = fileExpEntry.hashKey;
+      infos.latestMoveInfo.move = fileExpEntry.move;
+      infos.latestMoveInfo.score = fileExpEntry.score;
+      infos.latestMoveInfo.depth = fileExpEntry.depth;
+      learningHT.insert(make_pair(fileExpEntry.hashKey, infos));
+    }
 }
 
-void mctsInsert(ExpEntry tempExpEntry)
+/// getNodeFromGlobalHT(Key key) probes the Monte-Carlo hash table to return the node with the given
+/// position or a nullptr Node if it doesn't exist yet in the table.
+Node getNodeFromHT(Key key,HashTableType hashTableType)
 {
-	// If the node already exists in the hash table, we want to return it.
-	// We search in the range of all the hash table entries with key "key1".
-	auto range = mctsHT.equal_range(tempExpEntry.hashKey);
-	auto it1 = range.first;
-	auto it2 = range.second;
+  // We search in the range of all the hash table entries with key key.
+  Node currentNode = nullptr;
+  auto range=globalLearningHT.equal_range(key);
+  if(hashTableType==HashTableType::experience)
+    {
+      range=experienceHT.equal_range(key);
+    }
+  auto it1 = range.first;
+  auto it2 = range.second;
+  while (it1 != it2)
+  {
+    currentNode = &(it1->second);
+    if (currentNode->hashKey == key)
+    {
+	return currentNode;
+    }
+    it1++;
+  }
 
-	bool newNode = true;
-	while (it1 != it2)
-	{
-		Node node = &(it1->second);
-
-		if (node->hashKey == tempExpEntry.hashKey)
-		{
-			bool newChild = true;
-			node->lateChild.move = tempExpEntry.move;
-			node->lateChild.score = tempExpEntry.score;
-			node->lateChild.depth = tempExpEntry.depth;
-			newNode = false;
-			for (int x = 0; x < node->sons; x++)
-			{
-				if (node->child[x].move == tempExpEntry.move)
-				{
-					newChild = false;
-					node->child[x].move = tempExpEntry.move;
-					node->child[x].depth = tempExpEntry.depth;
-					node->child[x].score = tempExpEntry.score;
-					node->child[x].visits++;
-					//	node->sons++;
-					node->totalVisits++;
-					break;
-				}
-			}
-			if (newChild && node->sons < MAX_CHILDREN)
-			{
-				node->child[node->sons].move = tempExpEntry.move;
-				node->child[node->sons].depth = tempExpEntry.depth;
-				node->child[node->sons].score = tempExpEntry.score;
-				node->child[node->sons].visits++;
-				node->sons++;
-				node->totalVisits++;
-			}
-
-
-
-		}
-
-		it1++;
-	}
-
-	if (newNode)
-	{
-		// Node was not found, so we have to create a new one
-		NodeInfo infos;
-
-		infos.hashKey = 0;        // Zobrist hash of pawns
-		infos.sons = 0;
-
-		infos.totalVisits = 0;// number of visits by the Monte-Carlo algorithm
-		infos.child[0].move = MOVE_NONE;
-		infos.child[0].depth = DEPTH_NONE;
-		infos.child[0].score = VALUE_NONE;
-		infos.child[0].visits = 0;
-		std::memset(infos.child, 0, sizeof(Child) * 20);
-		infos.lateChild.move = MOVE_NONE;;
-		infos.lateChild.score = VALUE_NONE;
-		infos.lateChild.depth = DEPTH_NONE;
-
-		infos.lateChild.move = tempExpEntry.move;;
-		infos.lateChild.score = tempExpEntry.score;
-		infos.lateChild.depth = tempExpEntry.depth;
-
-		infos.hashKey = tempExpEntry.hashKey;        // Zobrist hash of pawns
-		infos.sons = 1;       // number of visits by the Monte-Carlo algorithm
-		infos.totalVisits = 1;
-		infos.child[0].move = tempExpEntry.move;
-		infos.child[0].depth = tempExpEntry.depth;
-		infos.child[0].score = tempExpEntry.score;
-		infos.child[0].visits = 1;       // number of sons expanded by the Monte-Carlo algorithm
-										 //infos.lastMove = MOVE_NONE; // the move between the parent and this node
-
-										 //debug << "inserting into the hash table: key = " << key1 << endl;
-
-		mctsHT.insert(make_pair(tempExpEntry.hashKey, infos));
-	}
+  return currentNode;
 }
 
-/// get_node() probes the Monte-Carlo hash table to find the node with the given
-/// position, creating a new entry if it doesn't exist yet in the table.
-/// The returned node is always valid.
-Node get_node(Key key) {
-
-
-	// If the node already exists in the hash table, we want to return it.
-	// We search in the range of all the hash table entries with key "key1".
-
-	Node mynode = nullptr;
-	auto range = mctsHT.equal_range(key);
-	auto it1 = range.first;
-	auto it2 = range.second;
-
-	if (
-		it1 != mctsHT.end()
-		&& 
-		it2 != mctsHT.end()
-		)
-	{
-
-		mynode = &(it1->second);
-
-		while (
-			it1 != it2
-			&&
-			it1 != mctsHT.end()
-			)
-		{
-			Node node = &(it1->second);
-			if (node->hashKey == key)
-				return node;
-
-			it1++;
-		}
-
-	}
-	return mynode;
-}
-
-void loadLearningFiles(std::string fileName)
+void writeLearningFile(HashTableType hashTableType)
 {
-    std::ofstream master (fileName+".bin",
-			std::ofstream::app | std::ofstream::binary);
+  std::ofstream outputFile ("experience.bin", std::ofstream::trunc | std::ofstream::binary);
+  LearningHashTable currentLearningHT;
+  currentLearningHT=experienceHT;
+  if(hashTableType==HashTableType::global)
+    {
+      currentLearningHT=globalLearningHT;
+    }
+  for(auto& it:currentLearningHT)
+  {
+    LearningFileEntry currentFileExpEntry;
+    NodeInfo currentNodeInfo=it.second;
+    MoveInfo currentLatestMoveInfo=currentNodeInfo.latestMoveInfo;
+    currentFileExpEntry.depth = currentLatestMoveInfo.depth;
+    currentFileExpEntry.hashKey = it.first;
+    currentFileExpEntry.move = currentLatestMoveInfo.move;
+    currentFileExpEntry.score = currentLatestMoveInfo.score;
+    outputFile.write((char*)&currentFileExpEntry, sizeof(currentFileExpEntry));
+  }
+  outputFile.close();
+}
+
+void loadSlaveLearningFilesIntoLearningTables()
+{
     bool merging=true;
     int i=0;
     while (merging)
     {
       std::string index = std::to_string(i);
-      std::string slaveName = fileName + index + ".bin";
-      ifstream slave (slaveName, ios::in | ios::binary);
-      if(!slave.good())
+      std::string slaveFileName ="";
+      slaveFileName="experience" + index + ".bin";
+      ifstream slaveInputFile (slaveFileName, ios::in | ios::binary);
+      if(!slaveInputFile.good())
       {
-	  merging=false;
-	  i++;
+	merging=false;
+	i++;
       }
       else
       {
-	while(slave.good())
+	while(slaveInputFile.good())
 	{
-	    ExpEntry tempExpEntry;
-	    tempExpEntry.depth = Depth(0);
-	    tempExpEntry.hashKey = 0;
-	    tempExpEntry.move = Move(0);
-	    tempExpEntry.score = Value(0);
+	  LearningFileEntry slaveFileExpEntry;
+	  slaveFileExpEntry.depth = DEPTH_ZERO;
+	  slaveFileExpEntry.hashKey = 0;
+	  slaveFileExpEntry.move = MOVE_NONE;
+	  slaveFileExpEntry.score = VALUE_NONE;
 
-	    slave.read((char*)&tempExpEntry, sizeof(tempExpEntry));
-	    if (tempExpEntry.hashKey)
-	    {
-	      Node node = get_node(tempExpEntry.hashKey);
-	      if ((node==nullptr) || tempExpEntry.hashKey != node->hashKey)
-	      {
-		  master.write((char*)&tempExpEntry, sizeof(tempExpEntry));
-		  mctsInsert(tempExpEntry);
-	      }
-	      if(node!=nullptr)
-	      {
-		if (tempExpEntry.hashKey == node->hashKey
-			&& tempExpEntry.move == node->lateChild.move
-			&& tempExpEntry.depth > node->lateChild.depth
-			)
-		{
-		  mctsInsert(tempExpEntry);
-		}
-		if (tempExpEntry.hashKey == node->hashKey
-			&& tempExpEntry.move != node->lateChild.move
-			&& tempExpEntry.score > node->lateChild.score
-			)
-		{
-		  master.write((char*)&tempExpEntry, sizeof(tempExpEntry));
-		  mctsInsert(tempExpEntry);
-		}
-	      }
-	    }
-	    else
-	    {
-		slave.close();
-		char slaveStr[slaveName.size() + 1];
-		strcpy(slaveStr, slaveName.c_str());
-		remove(slaveStr);
-		i++;
-	    }
+	  slaveInputFile.read((char*)&slaveFileExpEntry, sizeof(slaveFileExpEntry));
+	  if (slaveFileExpEntry.hashKey)
+	  {
+	      insertIntoOrUpdateLearningTable(slaveFileExpEntry,experienceHT);
+	  }
+	  else
+	  {
+	    slaveInputFile.close();
+	    char slaveStr[slaveFileName.size() + 1];
+	    strcpy(slaveStr, slaveFileName.c_str());
+	    remove(slaveStr);
+	    i++;
+	  }
 	}
       }
-
     }
-    master.close();
 }
 //from Kelly End

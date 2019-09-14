@@ -109,6 +109,7 @@ namespace Endgames {
   }
 }
 
+
 /// Mate with KX vs K. This function is used to evaluate positions with
 /// king and plenty of material vs a lone king. It simply gives the
 /// attacking side a bonus for driving the defending king towards the edge

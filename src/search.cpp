@@ -24,6 +24,7 @@
 #include <cstring>   // For std::memset
 #include <iostream>
 #include <sstream>
+#include <random>
 #include <fstream> //kelly
 
 #include "polybook.h"
@@ -38,15 +39,10 @@
 #include "tt.h"
 #include "uci.h"
 #include "syzygy/tbprobe.h"
-
 //kelly begin
-bool useExp = true;
-bool enableExpProbe;
-int movesPlayed = 0;
-bool startPoint = false;
-int openingVariationMoveWritten = 0;
-Key openingVariationMovesKeys[8];
-bool pawnGameLoaded = false;
+bool useLearning = true;
+bool enabledLearningProbe;
+
 //kelly end
 namespace Search {
 
@@ -118,7 +114,6 @@ namespace {
 
   bool doNull;
   int tactical;
-  
   // Breadcrumbs are used to mark nodes as being searched by a given thread
   struct Breadcrumb {
     std::atomic<Thread*> thread;
@@ -161,6 +156,8 @@ namespace {
     Breadcrumb* location;
     bool otherThread, owning;
   };
+
+  int variety;
 
   template <NodeType NT>
   Value search(Position& pos, Stack* ss, Value alpha, Value beta, Depth depth, bool cutNode);
@@ -216,7 +213,6 @@ void Search::init() {
 /// Search::clear() resets search state to its initial value
 
 void Search::clear() {
-
   if (Options["NeverClearHash"])
 	return;
 
@@ -247,29 +243,25 @@ void MainThread::search() {
   TT.new_search();
   else
   TT.infinite_search();
-  // Read search options
   doNull = Options["NullMove"];
   tactical = Options["ICCF Analyzes"];
   percSearch=Options["Perceptron Algorithm"];
   mctsSearch=Options["Use MCTS Score"];
-  persistedSelfLearning=Options["NN Persisted Self-Learning"];
+  persistedSelfLearning=Options["NN Persisted Self-Learning"];//from Kelly
   //Kelly begin
   int piecesCnt=0;
   if(persistedSelfLearning){
-	  enableExpProbe = false;
-	  piecesCnt = rootPos.count<KNIGHT>(WHITE) + rootPos.count<BISHOP>(WHITE) + rootPos.count<ROOK>(WHITE) + rootPos.count<QUEEN>(WHITE) + rootPos.count<KING>(WHITE)
-		  + rootPos.count<KNIGHT>(BLACK) + rootPos.count<BISHOP>(BLACK) + rootPos.count<ROOK>(BLACK) + rootPos.count<QUEEN>(BLACK) + rootPos.count<KING>(BLACK);
-	  if ((piecesCnt <= 8) && ((rootPos.count<PAWN>(WHITE)+rootPos.count<PAWN>(BLACK))>=1) && !pawnGameLoaded)
-	  {
-		  pawnGameLoaded = true;
-		  expResize("pawngame");
-	  }
-	  if (piecesCnt <= 8)
-	  {
-		  useExp = true;
-	  }
-	}
+  enabledLearningProbe = false;
+  piecesCnt = rootPos.count<KNIGHT>(WHITE) + rootPos.count<BISHOP>(WHITE) + rootPos.count<ROOK>(WHITE) + rootPos.count<QUEEN>(WHITE) + rootPos.count<KING>(WHITE)
+	  + rootPos.count<KNIGHT>(BLACK) + rootPos.count<BISHOP>(BLACK) + rootPos.count<ROOK>(BLACK) + rootPos.count<QUEEN>(BLACK) + rootPos.count<KING>(BLACK);
+
+  if (piecesCnt <= PIECE_TYPE_NB)
+  {
+    useLearning = true;
+  }
+}
   //Kelly end
+  variety = Options["Variety"];
   if (rootMoves.empty())
   {
       rootMoves.emplace_back(MOVE_NONE);
@@ -280,19 +272,20 @@ void MainThread::search() {
   else
   {
       Move bookMove = MOVE_NONE;
+						 
+									
 
-      if (!Limits.infinite && !Limits.mate)
-      {
-          bookMove = polybook.probe(rootPos);
-          if (!bookMove)          
-              bookMove = polybook2.probe(rootPos);
-      }
+      if (bool(Options["Use Book1"]) && !Limits.infinite && !Limits.mate)
+	   
+          bookMove = polybook1.probe(rootPos);
+      if (bool(Options["Use Book2"]) && !Limits.infinite && !Limits.mate)
+          bookMove = polybook2.probe(rootPos);
+	   
 
       if (bookMove && std::count(rootMoves.begin(), rootMoves.end(), bookMove))
       {
           for (Thread* th : Threads)
               std::swap(th->rootMoves[0], *std::find(th->rootMoves.begin(), th->rootMoves.end(), bookMove));
-									
       }
       else
       {
@@ -366,49 +359,20 @@ void MainThread::search() {
   previousScore = bestThread->rootMoves[0].score;
   
   //kelly begin	
- if(persistedSelfLearning){
-	  if ((((movesPlayed <= 300) || (piecesCnt <= 6)) && (bestThread->completedDepth > 4 * ONE_PLY)))
-	  {
-	    std::ofstream general("SugaR-NN_Files/experience.bin", std::ofstream::app | std::ofstream::binary);
-	    ExpEntry tempExpEntry;
-	    tempExpEntry.depth = bestThread->completedDepth;
-	    tempExpEntry.hashKey = rootPos.key();
-	    tempExpEntry.move = bestThread->rootMoves[0].pv[0];
-	    tempExpEntry.score = bestThread->rootMoves[0].score;
-	    if (movesPlayed <= 300 && startPoint &&  piecesCnt > 6)
-	    {
-		    general.write((char*)&tempExpEntry, sizeof(tempExpEntry));
-	    }
-	    if (startPoint &&  piecesCnt > 6)
-	    {
-	      for (int openingVariationMoveIndex = 0; openingVariationMoveIndex < openingVariationMoveWritten; openingVariationMoveIndex++)
-	      {
-		string openingFileName;
-		char *openingFileNameArray;
-	
-		std::ostringstream ss;
-		ss << openingVariationMovesKeys[openingVariationMoveIndex];
-		openingFileName = "SugaR-NN_Files/" + ss.str() + ".bin";
-		openingFileNameArray = new char[openingFileName.length() + 1];
-		std::strcpy(openingFileNameArray, openingFileName.c_str());
-		std::ofstream myFile(openingFileNameArray, std::ofstream::app | std::ofstream::binary);
-		myFile.write((char*)&tempExpEntry, sizeof(tempExpEntry));
-		myFile.close();
-	      }
-	    }
-	    if (piecesCnt <= 2)
-	    {
-		    std::ofstream pawngame("SugaR-NN_Files/pawngame.bin", std::ofstream::app | std::ofstream::binary);
-		    pawngame.write((char*)&tempExpEntry, sizeof(tempExpEntry));
-		    pawngame.close();
-	    }
-	    movesPlayed++;
-	  }
-	
-	  if (!enableExpProbe)
-	  {
-	      useExp = false;
-	
+  if(persistedSelfLearning){
+  if (bestThread->completedDepth > 4 * ONE_PLY)
+  {
+    LearningFileEntry currentLearningEntry;
+    currentLearningEntry.depth = bestThread->completedDepth;
+    currentLearningEntry.hashKey = rootPos.key();
+    currentLearningEntry.move = bestThread->rootMoves[0].pv[0];
+    currentLearningEntry.score = bestThread->rootMoves[0].score;
+    insertIntoOrUpdateLearningTable(currentLearningEntry,globalLearningHT);
+  }
+
+  if (!enabledLearningProbe)
+  {
+      useLearning = false;
 	  }
   }
   //Kelly end
@@ -453,7 +417,7 @@ void Thread::search() {
   bestValue = delta = alpha = -VALUE_INFINITE;
   beta = VALUE_INFINITE;
 
-  multiPV = Options["MultiPV"];
+  size_t multiPV = Options["MultiPV"];
 
   // Pick integer skill levels, but non-deterministically round up or down
   // such that the average integer skill corresponds to the input floating point one.
@@ -848,67 +812,67 @@ namespace {
           }
         return ttValue;
     }
-
     //from Kelly begin
-    if(persistedSelfLearning){
-	    expTTHit = false;
-	    updatedLearning = false;
-	
-	    if (!excludedMove && useExp)
+    if(persistedSelfLearning)
+    {
+      expTTHit = false;
+      updatedLearning = false;
+
+      if (!excludedMove && useLearning)
+      {
+	Node node = getNodeFromHT(posKey,HashTableType::global);
+	if (node!=nullptr)
+	{
+	    MoveInfo moveInfo = node->latestMoveInfo;
+	    if (node->hashKey == posKey)
 	    {
-	      Node node = get_node(posKey);
-	      if (node!=nullptr)
+	      bool haveTTMove = false;
+	      if (ttMove)
+		haveTTMove = true;
+	      enabledLearningProbe = true;
+	      expTTHit = true;
+
+	      if (!haveTTMove)
 	      {
-		Child child = node->child[0];
-		if (node->hashKey == posKey)
+		  ttMove = node->latestMoveInfo.move;
+	      }
+	      if (node->latestMoveInfo.depth >= depth)
+	      {
+		expTTMove = node->latestMoveInfo.move;
+		expTTValue = node->latestMoveInfo.score;
+		updatedLearning = true;
+	      }
+
+	      if (!PvNode && updatedLearning && moveInfo.depth >= depth)
+	      {
+		if (expTTValue >= beta)
 		{
-		  bool haveTTMove = false;
-		  if (ttMove)
-		    haveTTMove = true;
-		  enableExpProbe = true;
-		  expTTHit = true;
-		  if (node->lateChild.depth >= depth)
-		  {
-		    expTTMove = node->lateChild.move;
-		    expTTHit = true;
-		    expTTValue = node->lateChild.score;
-		    updatedLearning = true;
-		    child = node->lateChild;
-		    if (!haveTTMove)
+		  if (!pos.capture_or_promotion(moveInfo.move))
+		    update_quiet_stats(pos, ss, moveInfo.move, nullptr, 0, stat_bonus(depth));
+
+		  // Extra penalty for a quiet TT move in previous ply when it gets refuted
+		  if ((ss - 1)->moveCount == 1 && !pos.captured_piece())
+		    update_continuation_histories(ss - 1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
+		}
+		// Penalty for a quiet ttMove that fails low
+		    else
 		    {
-			ttMove = node->lateChild.move;
+			  if (!pos.capture_or_promotion(expTTMove))
+			  {
+				  int penalty = -stat_bonus(depth);
+				  thisThread->mainHistory[us][from_to(expTTMove)] << penalty;
+				  update_continuation_histories(ss, pos.moved_piece(expTTMove), to_sq(expTTMove), penalty);
+			  }
 		    }
 		    //thisThread->tbHits.fetch_add(1, std::memory_order_relaxed);
-		  }
-	
-		  if (!PvNode && updatedLearning
-			  && child.depth >= depth
-			  )
-		  {
-		    if (child.score >= beta)
-		    {
-		      if (!pos.capture_or_promotion(child.move))
-			update_quiet_stats(pos, ss, child.move, nullptr, 0, stat_bonus(depth));
-	
-		      // Extra penalty for a quiet TT move in previous ply when it gets refuted
-		      if ((ss - 1)->moveCount == 1 && !pos.captured_piece())
-			update_continuation_histories(ss - 1, pos.piece_on(prevSq), prevSq, -stat_bonus(depth + ONE_PLY));
-		    }
-	            // Penalty for a quiet ttMove that fails low
-	            else if (!pos.capture_or_promotion(expTTMove))
-	            {
-	                int penalty = -stat_bonus(depth);
-	                thisThread->mainHistory[us][from_to(expTTMove)] << penalty;
-	                update_continuation_histories(ss, pos.moved_piece(expTTMove), to_sq(expTTMove), penalty);
-	            }
 		    return expTTValue;
-		  }
-		}
-	
 	      }
 	    }
 	}
+      }
+    }
     //from Kelly end
+
     // Step 5. Tablebases probe
     if (!rootNode && TB::Cardinality)
     {
@@ -986,16 +950,16 @@ namespace {
     else
     {
       //from kelly begin
-      if (!persistedSelfLearning || !(expTTHit)|| !(updatedLearning) )
+      if (!persistedSelfLearning || !(expTTHit)|| !(updatedLearning))
       {
 	if ((ss-1)->currentMove != MOVE_NULL)
 	{
-	    int bonus = -(ss-1)->statScore / 512;
+		int bonus = -(ss-1)->statScore / 512;
 
-	    ss->staticEval = eval = evaluate(pos) + bonus;
+		ss->staticEval = eval = evaluate(pos) + bonus;
 	}
 	else{
-	    ss->staticEval = eval = -(ss-1)->staticEval + 2 * Eval::Tempo;
+		ss->staticEval = eval = -(ss-1)->staticEval + 2 * Eval::Tempo;
 	}
 	tte->save(posKey, VALUE_NONE, ttPv, BOUND_NONE, DEPTH_NONE, MOVE_NONE, eval);
       }
@@ -1010,6 +974,7 @@ namespace {
       }
       //from Kelly end
     }
+
 
     // Step 7. Razoring (~2 Elo)
     if (   !rootNode // The required rootNode PV handling is not available in qsearch
@@ -1208,12 +1173,6 @@ moves_loop: // When in check, search starts from here
           sync_cout << "info depth " << depth / ONE_PLY
                     << " currmove " << UCI::move(move, pos.is_chess960())
                     << " currmovenumber " << moveCount + thisThread->pvIdx << sync_endl;
-
-      // In MultiPV mode also skip moves which will be searched later as PV moves
-      if (rootNode && std::count(thisThread->rootMoves.begin() + thisThread->pvIdx + 1,
-                                 thisThread->rootMoves.begin() + thisThread->multiPV, move))
-          continue;
-
       if (PvNode)
           (ss+1)->pv = nullptr;
 
@@ -1246,19 +1205,19 @@ moves_loop: // When in check, search starts from here
           ss->excludedMove = MOVE_NONE;
 
           if (value < singularBeta)
-	  {
+          {
               extension = ONE_PLY;
               singularLMR++;
 
-              if (value < singularBeta - std::min(3 * depth / ONE_PLY, 39))
+              if (value < singularBeta - std::min(4 * depth / ONE_PLY, 36))
               {
         	  singularLMR++;
               }
 	      //from Kelly begin
 	      if(persistedSelfLearning && expTTHit && move == expTTMove)
-	      {
-		  isSingularExtension = true;
-	      }
+	       {
+		   isSingularExtension = true;
+	       }
 	      //from Kelly end
 	  }
           // Multi-cut pruning
@@ -1319,13 +1278,13 @@ moves_loop: // When in check, search starts from here
               if (moveCountPruning)
 		//from Kelly begin
 		{
-                  continue;
+			continue;
 		}
-	      	if (isSingularExtension && moveCount > 1)
-	      	  {
-	      	    continue;
-		  }
-		//from Kelly end
+              if (isSingularExtension && moveCount > 1)
+        	{
+            	  continue;
+		}
+              //from Kelly end
 			  
               // Reduced depth of the next LMR search
               int lmrDepth = std::max(newDepth - reduction(improving, depth, moveCount), DEPTH_ZERO);
@@ -1347,7 +1306,7 @@ moves_loop: // When in check, search starts from here
               if (!pos.see_ge(move, Value(-(31 - std::min(lmrDepth, 18)) * lmrDepth * lmrDepth)))
                   continue;
           }
-          else if (  (!givesCheck || !extension)
+          else if (  !(givesCheck && extension)
                    && !pos.see_ge(move, Value(-199) * (depth / ONE_PLY))) // (~20 Elo)
                   continue;
       }
@@ -1393,7 +1352,7 @@ moves_loop: // When in check, search starts from here
           if ((ss-1)->moveCount > 15)
               r -= ONE_PLY;
 
-          // Decrease reduction if move has been singularly extended
+          // Decrease reduction if ttMove has been singularly extended
           r -= singularLMR * ONE_PLY;
 
           if (!captureOrPromotion)
@@ -1410,7 +1369,7 @@ moves_loop: // When in check, search starts from here
               // castling moves, because they are coded as "king captures rook" and
               // hence break make_move(). (~5 Elo)
               else if (    type_of(move) == NORMAL
-                       && !pos.see_ge(make_move(to_sq(move), from_sq(move))))
+                       && !pos.see_ge(reverse_move(move)))
                   r -= 2 * ONE_PLY;
 
               ss->statScore =  thisThread->mainHistory[us][from_to(move)]
@@ -1831,6 +1790,9 @@ moves_loop: // When in check, search starts from here
        }
     }
 
+    if (variety && (bestValue + (variety * PawnValueEg / 100) >= 0 ) && (pos.count<PAWN>() > 12))
+	  bestValue += rand() % (variety + 1);
+
     // All legal moves have been searched. A special case: If we're in check
     // and no legal moves were found, it is checkmate.
     if (inCheck && bestValue == -VALUE_INFINITE)
@@ -1930,6 +1892,9 @@ moves_loop: // When in check, search starts from here
     Thread* thisThread = pos.this_thread();
     thisThread->mainHistory[us][from_to(move)] << bonus;
     update_continuation_histories(ss, pos.moved_piece(move), to_sq(move), bonus);
+
+    if (type_of(pos.moved_piece(move)) != PAWN)
+        thisThread->mainHistory[us][from_to(reverse_move(move))] << -bonus;
 
     if (is_ok((ss-1)->currentMove))
     {
@@ -2144,27 +2109,9 @@ void Tablebases::rank_root_moves(Position& pos, Search::RootMoves& rootMoves) {
             m.tbRank = 0;
     }
 }
-
-void setStartPoint(bool start)
+//from Kelly begin
+void setStartPoint()
 {
-	startPoint = start;
+	useLearning = true;
 }
-
-void files(int x, Key FileKey)
-{
-	useExp = true;
-	openingVariationMovesKeys[x] = FileKey;
-	if (FileKey)
-	{
-		string openings;
-		char *openingsArray;
-
-		std::ostringstream ss;
-		ss << FileKey;
-		openings = ss.str() + ".bin";
-		openingsArray = new char[openings.length() + 1];
-		std::strcpy(openingsArray, openings.c_str());
-		expOpeningsLoad(openingsArray);
-		openingVariationMoveWritten = x;
-	}
-}
+//from Kelly end

@@ -71,24 +71,20 @@ Idea are implemented, integrated on SugaR:
 _Boolean, Default: True_
 
 
-- [https://github.com/Kellykinyama12/Stockfish] (montecarlo by Kelly Kinyama) only when true. This creates three files for machine learning purposes:
-SugaR-NN implements a persistent learning algorithm by Kelly kyniama and Andrea Manzo.
-Reads and creates the following file types:
+- [https://github.com/amchess/BrainLearn] SugaR-NN implements a persistent learning algorithm, managing a file named experience.bin by Kelly kyniama and Andrea Manzo.
 
-- pawngame.bin with the learning when there are max a total of 2 pieces for white and black
-- experience.bin with the learning for
-  - opening variation of max 16 moves (8 half-moves) and a total of at least 7 pieces (no pawns) for white and black
-  - positions with max 6 pieces (no pawns) for white and black
-- One or many .bin files, each one associated to a single position biunivocally associated to the (technically, hashKey), in an opening variation of max 8 moves (16 half-moves) and a total of at least 7 pieces (no pawns) for white and black. This position is also in the experience.bin. So, these files are to speed the load in memory.
-
-Every .bin file is so a collection of one or more positions stored with the following format (similar to in memory Stockfish Transposition Table):
+It is a collection of one or more positions stored with the following format (similar to in memory Stockfish Transposition Table):
 
 - _best move_
 - _board signature (hash key)_
 - _best move depth_
 - _best move score_
 
-At the engine loading, there is an automatic merge to pawn.bin and experience.bin files, if we put the other ones, based on the following convention:
+This file is loaded in an hashtable at the engine load and updated each time the engine receive quit or stop uci command.
+When BrainLearn starts a new game or when we have max 8 pieces on the chessboard, the learning is activated and the hash table updated each time the engine has a best score
+at a depth >= 4 PLIES, according to Stockfish aspiration window.
+
+At the engine loading, there is an automatic merge to experience.bin files, if we put the other ones, based on the following convention:
 
 &lt;fileType&gt;&lt;qualityIndex&gt;.bin
 
@@ -97,11 +93,10 @@ where
 - _fileType=&quot;experience&quot;/&quot;bin&quot;_
 - _qualityIndex_ , an integer, incrementally from 0 on based on the file&#39;s quality assigned by the user (0 best quality and so on)
 
-The opening files can be simply copied and, in case of conflict/same name, the user must choice the one to use.
-
 N.B.
 
 Because of disk access, to be effective, the learning must be made at no bullet time controls (less than 5 minutes/game).
+
 #### NN Perceptron Algorithm
 _Boolean, Default: False_
 

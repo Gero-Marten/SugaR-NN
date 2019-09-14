@@ -37,6 +37,7 @@ using namespace std;
 
 extern vector<string> setup_bench(const Position&, istream&);
 
+
 namespace {
 
   // FEN string of the initial position, normal chess
@@ -47,105 +48,32 @@ namespace {
   // The function sets up the position described in the given FEN string ("fen")
   // or the starting position ("startpos") and then makes the moves given in the
   // following move list ("moves").
-  
-  //from kelly begin
-  bool startPosition = false;
-  Key fileKey = 0;
-  //from Kelly end
-  
+    
   void position(Position& pos, istringstream& is, StateListPtr& states) {
 
     Move m;
     string token, fen;
-    string newFen; //from Kelly
-	bool persistedSelfLearning=Options["NN Persisted Self-Learning"]; //mcts
     is >> token;
 
     if (token == "startpos")
     {
-      //kellykynyama mcts begin
-      if(persistedSelfLearning)
-      {
-	startPosition = true;
-      }
-      //kellykynyama end
-      fen = StartFEN;
-      //kellykynyama mcts begin
-      if(persistedSelfLearning)
-      {
-	 	newFen = fen;
-      }
-      //kellykynyama mcts end
-      is >> token; // Consume "moves" token if any
+        fen = StartFEN;
+        is >> token; // Consume "moves" token if any
     }
     else if (token == "fen")
-    {
-      //kellykynyama mcts begin
-      if(persistedSelfLearning)
-      {
-		startPosition = false;
-		newFen = token;
-      }
-      //kellykynyama mcts end
-      while (is >> token && token != "moves")
-	      fen += token + " ";
-    }
+        while (is >> token && token != "moves")
+            fen += token + " ";
     else
         return;
 
     states = StateListPtr(new std::deque<StateInfo>(1)); // Drop old and create a new one
     pos.set(fen, Options["UCI_Chess960"], &states->back(), Threads.main());
-    //kellykynyama mcts begin
-    int movesPlayedPosition = 0;
-    int opMoves = 0;
-    if(persistedSelfLearning)
-    {
-      if (StartFEN != newFen)
-      {
-	      startPosition = false;
-	      fileKey = pos.key();
-      }
-      else
-      {
-	      startPosition = true;
-	      fileKey = 0;
-      }
-    }
-    //kellykynyama mcts end
 
     // Parse move list (if any)
     while (is >> token && (m = UCI::to_move(pos, token)) != MOVE_NONE)
     {
         states->emplace_back();
-
-	//kellykynyama mcts begin
-        if(persistedSelfLearning)
-        {
-	  if (!fileKey)
-	  {
-	    if ((movesPlayedPosition == 2 || movesPlayedPosition == 4 || movesPlayedPosition == 6 || movesPlayedPosition == 8 || movesPlayedPosition == 10 || movesPlayedPosition == 12 || movesPlayedPosition == 14 || movesPlayedPosition == 16) && newFen == StartFEN)
-	    {
-		    files(opMoves, pos.key());
-		    opMoves++;
-		    setStartPoint(startPosition);
-
-	    }
-	    if (movesPlayedPosition == 16 && newFen == StartFEN)
-	    {
-		    fileKey = pos.key();
-		    setStartPoint(startPosition);
-	    }
-	  }
-        }
-	//kellykyniama mcts end
-
-        pos.do_move(m, states->back());
-        //kellykyniama mcts begin
-        if(persistedSelfLearning)
-        {
-            movesPlayedPosition++;
-        }
-        //kellykyniama mcts end
+		pos.do_move(m, states->back());
     }
   }
 
@@ -236,7 +164,15 @@ namespace {
         }
         else if (token == "setoption")  setoption(is);
         else if (token == "position")   position(pos, is, states);
-        else if (token == "ucinewgame") { Search::clear(); elapsed = now(); } // Search::clear() may take some while
+        else if (token == "ucinewgame") {
+			Search::clear(); elapsed = now(); 
+			//from Kelly
+            if(Options["NN Persisted Self-Learning"])
+              {
+                setStartPoint();
+              }
+			//end from Kelly
+        } // Search::clear() may take some while
     }
 
     elapsed = now() - elapsed + 1; // Ensure positivity to avoid a 'divide by zero'
@@ -281,7 +217,13 @@ void UCI::loop(int argc, char* argv[]) {
 
       if (    token == "quit"
           ||  token == "stop")
-          Threads.stop = true;
+	{
+	  if(Options["NN Persisted Self-Learning"])
+	    {
+	      writeLearningFile(HashTableType::global);
+	    }
+	  Threads.stop = true;
+	}
 
       // The GUI sends 'ponderhit' to tell us the user has played the expected move.
       // So 'ponderhit' will be sent if we were told to ponder on the same move the
@@ -297,14 +239,16 @@ void UCI::loop(int argc, char* argv[]) {
 
       else if (token == "setoption")  setoption(is);
       else if (token == "go")         go(pos, is, states);
-      else if (token == "position")
-      {
-          position(pos, is, states);
-
-          if (Options["Clean Search"] == 1)
-              Search::clear();
-      }
-      else if (token == "ucinewgame") Search::clear();
+      else if (token == "position")   position(pos, is, states);
+	  else if (token == "ucinewgame")
+		{
+	      Search::clear();
+		  //from Kelly	
+	      if(Options["NN Persisted Self-Learning"]){
+		  	setStartPoint();
+	      }
+		  //end from Kelly
+	  }
       else if (token == "isready")    sync_cout << "readyok" << sync_endl;
 
       // Additional custom non-UCI commands, mainly for debugging

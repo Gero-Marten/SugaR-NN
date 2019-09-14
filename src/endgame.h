@@ -103,6 +103,7 @@ namespace Endgames {
   extern std::pair<Map<Value>, Map<ScaleFactor>> maps;
 
   void init();
+
   template<typename T>
   Map<T>& map() {
     return std::get<std::is_same<T, ScaleFactor>::value>(maps);

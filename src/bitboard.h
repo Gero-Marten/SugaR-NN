@@ -151,6 +151,7 @@ inline bool opposite_colors(Square s1, Square s2) {
   return bool(DarkSquares & s1) != bool(DarkSquares & s2);
 }
 
+
 /// rank_bb() and file_bb() return a bitboard representing all the squares on
 /// the given file or rank.
 
@@ -171,7 +172,7 @@ inline Bitboard file_bb(Square s) {
 }
 
 
-/// shift() moves a bitboard one step along direction D (mainly for pawns)
+/// shift() moves a bitboard one step along direction D
 
 template<Direction D>
 constexpr Bitboard shift(Bitboard b) {

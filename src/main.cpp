@@ -19,9 +19,6 @@
 */
 
 #include <iostream>
-#include <dir.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 
 #include "bitboard.h"
 #include "position.h"
@@ -40,22 +37,18 @@ namespace PSQT {
 int main(int argc, char* argv[]) {
 
   std::cout << engine_info() << std::endl;
-  
-	char const *dirname = "SugaR-NN_Files";
-
-	mkdir(dirname); 
   UCI::init(Options);
   if(Options["NN Persisted Self-Learning"])
   {
-	  //from Kelly begin
-	  expResize("SugaR-NN_Files/experience");
-	  loadLearningFiles("SugaR-NN_Files/experience");
-	  expResize("SugaR-NN_Files/pawngame");
-	  loadLearningFiles("SugaR-NN_Files/pawngame");
-	  mctsHT.clear();
-	  expResize("SugaR-NN_Files/experience");
-	  //from Kelly end
-  }  
+  //from Kelly begin
+  loadLearningFileIntoLearningTables(true);
+  loadSlaveLearningFilesIntoLearningTables();
+  writeLearningFile(HashTableType::experience);
+  experienceHT.clear();
+  globalLearningHT.clear();
+  loadLearningFileIntoLearningTables(false);
+  //from Kelly end
+  }
   PSQT::init();
   Bitboards::init();
   Position::init();
@@ -63,7 +56,7 @@ int main(int argc, char* argv[]) {
   Endgames::init();
   Search::init();
   Threads.set(Options["Threads"]);
-  polybook.init(Options["BookFile"]);
+  polybook1.init(Options["BookFile1"]);
   polybook2.init(Options["BookFile2"]);
   Search::clear(); // After threads are up
 
